@@ -139,6 +139,10 @@ def main() -> None:
 
     sub.add_parser("track", help="Live head tracking output")
 
+    anchor_p = sub.add_parser("anchor", help="Spatial anchoring demo — pin windows in 3D space")
+    anchor_p.add_argument("--mock", action="store_true", help="Use mouse simulation (no glasses needed)")
+    anchor_p.add_argument("--windowed", action="store_true", help="Run in a window instead of fullscreen")
+
     args = parser.parse_args()
     if args.command is None:
         # Default to discover
@@ -149,6 +153,26 @@ def main() -> None:
         cmd_dump(args)
     elif args.command == "track":
         cmd_track(args)
+    elif args.command == "anchor":
+        cmd_anchor(args)
+
+
+def cmd_anchor(args: argparse.Namespace) -> None:
+    """Launch the spatial anchoring display."""
+    from rokid_spatial.spatial_display import run_spatial_display
+
+    mode = "mock" if args.mock else "live"
+    print(f"Starting spatial anchor display ({mode} mode)...")
+    print("Controls:")
+    print("  SPACE     — Recenter view")
+    print("  1-5       — Place mock panel at current gaze")
+    print("  W         — Capture a real macOS window and anchor it")
+    print("  D + 1-5   — Delete panel")
+    print("  +/-       — Adjust sensitivity")
+    print("  R         — Reset all panels")
+    print("  Q / ESC   — Quit")
+    print()
+    run_spatial_display(mock=args.mock, fullscreen=not args.windowed)
 
 
 if __name__ == "__main__":

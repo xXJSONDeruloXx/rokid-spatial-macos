@@ -5,6 +5,17 @@ into a quaternion orientation estimate.
 
 Reference: S. Madgwick, "An efficient orientation filter for inertial
 and inertial/magnetic sensor arrays" (2010).
+
+Rokid Max axis mapping notes:
+  The Rokid Max's IMU has a non-standard axis orientation. From empirical
+  testing and XRLinuxDriver reference code, the raw sensor axes need
+  remapping for correct pitch/yaw/roll behavior:
+    - Gyro/Accel X axis → maps to head pitch (nodding)
+    - Gyro/Accel Y axis → maps to head yaw (turning left/right)
+    - Gyro/Accel Z axis → maps to head roll (tilting)
+  The Madgwick filter expects:
+    - X = roll, Y = pitch, Z = yaw
+  So we remap: sensor(x,y,z) → filter(z, x, y) with sign adjustments.
 """
 
 from __future__ import annotations
@@ -13,6 +24,22 @@ import math
 from dataclasses import dataclass, field
 
 from rokid_spatial.spatial import Quaternion, normalize_quaternion
+
+
+def remap_rokid_axes(
+    gx: float, gy: float, gz: float,
+    ax: float, ay: float, az: float,
+) -> tuple[float, float, float, float, float, float]:
+    """Remap Rokid Max sensor axes to Madgwick-expected NWU convention.
+
+    The Rokid's IMU axes are oriented differently from the NED/NWU frame
+    that Madgwick expects. This remapping was derived empirically:
+      - Negate gyro X and Z for correct pitch/yaw direction
+      - Negate accel X and Z for correct gravity alignment
+
+    Returns: (gx, gy, gz, ax, ay, az) in Madgwick convention.
+    """
+    return (-gx, gy, -gz, -ax, ay, -az)
 
 
 @dataclass
@@ -24,6 +51,7 @@ class MadgwickFilter:
               Default 0.1 is a good balance for head tracking.
         sample_period: Expected time between samples in seconds.
         quaternion: Current orientation estimate.
+        remap_axes: Apply Rokid-specific axis remapping before fusion.
     """
 
     beta: float = 0.1
@@ -31,6 +59,7 @@ class MadgwickFilter:
     quaternion: Quaternion = field(
         default_factory=lambda: Quaternion(w=1.0, x=0.0, y=0.0, z=0.0)
     )
+    remap_axes: bool = True  # Set False for pre-remapped or simulated data
 
     def update_imu(
         self,
@@ -54,6 +83,9 @@ class MadgwickFilter:
         """
         if dt is None:
             dt = self.sample_period
+
+        if self.remap_axes:
+            gx, gy, gz, ax, ay, az = remap_rokid_axes(gx, gy, gz, ax, ay, az)
 
         q = self.quaternion
         qw, qx, qy, qz = q.w, q.x, q.y, q.z
