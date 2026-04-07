@@ -1,96 +1,103 @@
-"""RED tests for Rokid Max HID report parser."""
+"""RED → GREEN tests for Rokid Max HID report parser.
 
+Uses the REAL packet format confirmed from live capture:
+  Report ID 0x11, raw accel/gyro/mag (no pre-fused quaternion).
+"""
+
+import math
 import struct
 
 import numpy as np
 import pytest
 
-from rokid_spatial.parser import IMUReport, parse_imu_report
+from rokid_spatial.constants import REPORT_ID_IMU_DATA
+from rokid_spatial.parser import IMURawReport, parse_imu_report
 
 
-def _make_fake_imu_packet(
-    report_id: int = 0x02,
+def _make_imu_packet(
+    report_id: int = REPORT_ID_IMU_DATA,
     timestamp_ns: int = 1_000_000_000,
-    qx: float = 0.0,
-    qy: float = 0.0,
-    qz: float = 0.0,
-    qw: float = 1.0,
-    ax: float = 0.0,
-    ay: float = 0.0,
-    az: float = -9.81,
-    gx: float = 0.0,
-    gy: float = 0.0,
-    gz: float = 0.0,
+    accel: tuple[float, float, float] = (0.0, 0.0, -9.81),
+    gyro: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    mag: tuple[float, float, float] = (-23.55, -36.3, -31.2),
+    host_timestamp_ns: int = 2_000_000_000,
 ) -> bytes:
-    """Build a synthetic IMU packet matching the expected Rokid HID layout.
-
-    Layout hypothesis (64 bytes total):
-      [0]       report_id (uint8)
-      [1:9]     sensor_timestamp_ns (uint64 LE)
-      [9:13]    qx (float32 LE)
-      [13:17]   qy (float32 LE)
-      [17:21]   qz (float32 LE)
-      [21:25]   qw (float32 LE)
-      [25:29]   ax (float32 LE) - accelerometer
-      [29:33]   ay (float32 LE)
-      [33:37]   az (float32 LE)
-      [37:41]   gx (float32 LE) - gyroscope
-      [41:45]   gy (float32 LE)
-      [45:49]   gz (float32 LE)
-      [49:64]   padding/reserved
-    """
+    """Build a synthetic IMU packet matching the confirmed Rokid HID layout."""
     header = struct.pack("<BQ", report_id, timestamp_ns)
-    quat = struct.pack("<ffff", qx, qy, qz, qw)
-    accel = struct.pack("<fff", ax, ay, az)
-    gyro = struct.pack("<fff", gx, gy, gz)
-    padding = bytes(64 - len(header) - len(quat) - len(accel) - len(gyro))
-    return header + quat + accel + gyro + padding
+    sensors = struct.pack(
+        "<3f3f3f",
+        *accel, *gyro, *mag,
+    )
+    reserved = struct.pack("<f", 0.0)
+    host_ts = struct.pack("<Q", host_timestamp_ns)
+    # Pad to 64 bytes total
+    so_far = header + sensors + reserved + host_ts
+    padding = bytes(64 - len(so_far))
+    return so_far + padding
+
+
+# Actual packet captured from the Rokid Max
+REAL_PACKET = bytes.fromhex(
+    "11304fa221b50100"
+    "00a26ecdbd52001b"
+    "41bc5bfd3f11df10"
+    "3c20eb5e3bc49902"
+    "3b6666bcc1333311"
+    "c29a99f9c1000000"
+    "80d27e18ab010000"
+    "000000643c000000"
+)
 
 
 class TestParseIMUReport:
-    """Test raw bytes → IMUReport conversion."""
+    """Test raw bytes → IMURawReport conversion."""
 
     def test_parse_returns_imu_report(self):
-        """parse_imu_report returns an IMUReport dataclass."""
-        packet = _make_fake_imu_packet()
+        """parse_imu_report returns an IMURawReport dataclass."""
+        packet = _make_imu_packet()
         report = parse_imu_report(packet)
-        assert isinstance(report, IMUReport)
+        assert isinstance(report, IMURawReport)
 
     def test_parse_extracts_timestamp(self):
         """Timestamp is correctly extracted from the packet."""
         ts = 5_000_000_000
-        packet = _make_fake_imu_packet(timestamp_ns=ts)
+        packet = _make_imu_packet(timestamp_ns=ts)
         report = parse_imu_report(packet)
         assert report.timestamp_ns == ts
 
-    def test_parse_extracts_quaternion(self):
-        """Quaternion components are extracted correctly."""
-        packet = _make_fake_imu_packet(qx=0.1, qy=0.2, qz=0.3, qw=0.9)
-        report = parse_imu_report(packet)
-        assert pytest.approx(report.qx, abs=1e-5) == 0.1
-        assert pytest.approx(report.qy, abs=1e-5) == 0.2
-        assert pytest.approx(report.qz, abs=1e-5) == 0.3
-        assert pytest.approx(report.qw, abs=1e-5) == 0.9
-
     def test_parse_extracts_accelerometer(self):
-        """Accelerometer data is parsed from the packet."""
-        packet = _make_fake_imu_packet(ax=1.5, ay=-2.0, az=-9.81)
+        """Accelerometer data is parsed correctly."""
+        packet = _make_imu_packet(accel=(1.5, -2.0, -9.81))
         report = parse_imu_report(packet)
         assert pytest.approx(report.accel_x, abs=1e-4) == 1.5
         assert pytest.approx(report.accel_y, abs=1e-4) == -2.0
         assert pytest.approx(report.accel_z, abs=1e-4) == -9.81
 
     def test_parse_extracts_gyroscope(self):
-        """Gyroscope data is parsed from the packet."""
-        packet = _make_fake_imu_packet(gx=0.01, gy=-0.02, gz=0.03)
+        """Gyroscope data is parsed correctly."""
+        packet = _make_imu_packet(gyro=(0.01, -0.02, 0.03))
         report = parse_imu_report(packet)
         assert pytest.approx(report.gyro_x, abs=1e-5) == 0.01
         assert pytest.approx(report.gyro_y, abs=1e-5) == -0.02
         assert pytest.approx(report.gyro_z, abs=1e-5) == 0.03
 
+    def test_parse_extracts_magnetometer(self):
+        """Magnetometer data is parsed correctly."""
+        packet = _make_imu_packet(mag=(-23.55, -36.3, -31.2))
+        report = parse_imu_report(packet)
+        assert pytest.approx(report.mag_x, abs=0.1) == -23.55
+        assert pytest.approx(report.mag_y, abs=0.1) == -36.3
+        assert pytest.approx(report.mag_z, abs=0.1) == -31.2
+
+    def test_parse_extracts_host_timestamp(self):
+        """Host timestamp is extracted from bytes 49-57."""
+        packet = _make_imu_packet(host_timestamp_ns=9_876_543_210)
+        report = parse_imu_report(packet)
+        assert report.host_timestamp_ns == 9_876_543_210
+
     def test_parse_rejects_wrong_report_id(self):
         """Packets with non-IMU report IDs raise ValueError."""
-        packet = _make_fake_imu_packet(report_id=0x11)  # Display report, not IMU
+        packet = _make_imu_packet(report_id=0x02)
         with pytest.raises(ValueError, match="report ID"):
             parse_imu_report(packet)
 
@@ -100,10 +107,26 @@ class TestParseIMUReport:
         with pytest.raises(ValueError, match="length"):
             parse_imu_report(short)
 
-    def test_parse_identity_quaternion(self):
-        """Identity quaternion (0,0,0,1) represents no rotation."""
-        packet = _make_fake_imu_packet(qx=0.0, qy=0.0, qz=0.0, qw=1.0)
+    def test_accel_norm_is_gravity(self):
+        """Accelerometer norm should be approximately 9.81 m/s² when stationary."""
+        packet = _make_imu_packet(accel=(-0.1, 9.69, 1.98))
         report = parse_imu_report(packet)
-        # Identity quaternion norm should be 1.0
-        norm = np.sqrt(report.qx**2 + report.qy**2 + report.qz**2 + report.qw**2)
-        assert pytest.approx(norm, abs=1e-6) == 1.0
+        norm = math.sqrt(report.accel_x**2 + report.accel_y**2 + report.accel_z**2)
+        assert pytest.approx(norm, abs=0.5) == 9.81
+
+    def test_parse_real_captured_packet(self):
+        """Parse an actual packet captured from the Rokid Max hardware."""
+        report = parse_imu_report(REAL_PACKET)
+        assert isinstance(report, IMURawReport)
+        # Accelerometer should show gravity (~9.8 m/s²)
+        accel_norm = math.sqrt(
+            report.accel_x**2 + report.accel_y**2 + report.accel_z**2
+        )
+        assert 9.0 < accel_norm < 11.0, f"Accel norm {accel_norm} not near gravity"
+        # Gyro should be small when stationary
+        gyro_norm = math.sqrt(
+            report.gyro_x**2 + report.gyro_y**2 + report.gyro_z**2
+        )
+        assert gyro_norm < 1.0, f"Gyro norm {gyro_norm} too large for stationary"
+        # Timestamp should be reasonable (positive, non-zero)
+        assert report.timestamp_ns > 0

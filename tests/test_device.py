@@ -101,7 +101,7 @@ class TestRokidDevice:
         """RokidDevice can open and close a HID connection."""
         mock_device_obj = mocker.MagicMock()
         mock_hid = mocker.patch("rokid_spatial.device.hid")
-        mock_hid.Device.return_value = mock_device_obj
+        mock_hid.device.return_value = mock_device_obj
 
         dev = RokidDevice(
             vendor_id=0x04D2,
@@ -112,6 +112,7 @@ class TestRokidDevice:
         )
         dev.open()
         assert dev.is_open
+        mock_device_obj.open_path.assert_called_once_with(b"/dev/hidraw0")
         dev.close()
         assert not dev.is_open
 
@@ -119,7 +120,7 @@ class TestRokidDevice:
         """RokidDevice works as a context manager."""
         mock_device_obj = mocker.MagicMock()
         mock_hid = mocker.patch("rokid_spatial.device.hid")
-        mock_hid.Device.return_value = mock_device_obj
+        mock_hid.device.return_value = mock_device_obj
 
         dev = RokidDevice(
             vendor_id=0x04D2,
@@ -137,7 +138,7 @@ class TestRokidDevice:
         mock_device_obj = mocker.MagicMock()
         mock_device_obj.read.return_value = bytes(64)
         mock_hid = mocker.patch("rokid_spatial.device.hid")
-        mock_hid.Device.return_value = mock_device_obj
+        mock_hid.device.return_value = mock_device_obj
 
         dev = RokidDevice(
             vendor_id=0x04D2,

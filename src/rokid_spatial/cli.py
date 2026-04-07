@@ -8,8 +8,9 @@ import time
 
 from rokid_spatial.constants import ROKID_VENDOR_ID
 from rokid_spatial.device import RokidDevice, discover_rokid_devices
-from rokid_spatial.parser import IMUReport, parse_imu_report
-from rokid_spatial.spatial import Quaternion, apply_coordinate_adjustment, euler_from_quaternion
+from rokid_spatial.fusion import MadgwickFilter
+from rokid_spatial.parser import IMURawReport, parse_imu_report
+from rokid_spatial.spatial import Quaternion, euler_from_quaternion
 
 
 def cmd_discover(args: argparse.Namespace) -> None:
@@ -59,16 +60,24 @@ def cmd_dump(args: argparse.Namespace) -> None:
 
 
 def cmd_track(args: argparse.Namespace) -> None:
-    """Live head tracking — print Euler angles from IMU data."""
+    """Live head tracking — fuse IMU data with Madgwick filter and print Euler angles."""
+    import math
+
     devices = discover_rokid_devices()
     if not devices:
         print("No Rokid devices found.", file=sys.stderr)
         sys.exit(1)
 
     dev = devices[0]
-    print(f"Tracking {dev.name} — press Ctrl+C to stop\n")
-    print(f"{'Roll':>8s}  {'Pitch':>8s}  {'Yaw':>8s}  {'ts_ms':>10s}")
-    print("-" * 42)
+    ahrs = MadgwickFilter(beta=0.1, sample_period=1 / 90)
+    last_ts: int | None = None
+    packet_count = 0
+
+    print(f"Tracking {dev.name} (Madgwick AHRS) — press Ctrl+C to stop\n")
+    print(f"{'Roll':>8s}  {'Pitch':>8s}  {'Yaw':>8s}  {'Hz':>5s}  {'packets':>8s}")
+    print("-" * 48)
+
+    hz_start = time.monotonic()
 
     try:
         with dev:
@@ -79,22 +88,41 @@ def cmd_track(args: argparse.Namespace) -> None:
                 try:
                     report = parse_imu_report(data)
                 except ValueError:
-                    continue  # Skip non-IMU reports
+                    continue
 
-                q = Quaternion(w=report.qw, x=report.qx, y=report.qy, z=report.qz)
-                q_nwu = apply_coordinate_adjustment(q)
-                roll, pitch, yaw = euler_from_quaternion(q_nwu)
+                # Compute dt from sensor timestamps
+                dt = 1.0 / 90.0
+                if last_ts is not None and report.timestamp_ns > last_ts:
+                    dt = (report.timestamp_ns - last_ts) / 1e9
+                    dt = max(0.001, min(dt, 0.1))  # Clamp to sane range
+                last_ts = report.timestamp_ns
 
-                import math
+                # Fuse with Madgwick
+                q = ahrs.update_imu(
+                    gx=report.gyro_x,
+                    gy=report.gyro_y,
+                    gz=report.gyro_z,
+                    ax=report.accel_x,
+                    ay=report.accel_y,
+                    az=report.accel_z,
+                    dt=dt,
+                )
+
+                packet_count += 1
+                elapsed = time.monotonic() - hz_start
+                hz = packet_count / elapsed if elapsed > 0 else 0
+
+                roll, pitch, yaw = euler_from_quaternion(q)
                 print(
                     f"{math.degrees(roll):8.2f}° "
                     f"{math.degrees(pitch):8.2f}° "
                     f"{math.degrees(yaw):8.2f}° "
-                    f"{report.timestamp_ns // 1_000_000:10d}ms",
+                    f"{hz:5.1f}  "
+                    f"{packet_count:8d}",
                     end="\r",
                 )
     except KeyboardInterrupt:
-        print("\nStopped.")
+        print(f"\nStopped after {packet_count} packets.")
 
 
 def main() -> None:

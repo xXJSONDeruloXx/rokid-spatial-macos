@@ -28,7 +28,9 @@ class RokidDevice:
         """Open the HID connection to the device."""
         if self._hid_device is not None:
             return
-        dev = hid.Device(path=self.path)
+        dev = hid.device()
+        dev.open_path(self.path)
+        dev.set_nonblocking(1)
         self._hid_device = dev
 
     def close(self) -> None:
@@ -44,7 +46,9 @@ class RokidDevice:
         """
         if self._hid_device is None:
             raise RuntimeError("Device is not open. Call open() first.")
-        data = self._hid_device.read(size, timeout=timeout_ms)
+        data = self._hid_device.read(size)
+        if not data:
+            return b""
         return bytes(data)
 
     def __enter__(self) -> RokidDevice:

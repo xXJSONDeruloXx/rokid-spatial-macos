@@ -14,12 +14,12 @@ ROKID_PRODUCT_IDS = {
     0x2180: "Rokid Max Pro",
 }
 
-# HID Report IDs
+# HID Report IDs (confirmed from live capture)
 REPORT_ID_OUTPUT = 0x01        # Host → Device (63 bytes payload)
-REPORT_ID_IMU_SENSOR = 0x02   # Device → Host: IMU sensor data (64 bytes)
-REPORT_ID_IMU_EXTRA = 0x03    # Device → Host: additional IMU data
-REPORT_ID_CONTROL = 0x04      # Device → Host: control/status reports
-REPORT_ID_DISPLAY = 0x11      # Device → Host: display status (report ID 17)
+REPORT_ID_IMU_DATA = 0x11      # Device → Host: IMU sensor data (report ID 17 = 0x11)
+REPORT_ID_UNKNOWN_02 = 0x02    # Device → Host: unknown (not observed in practice)
+REPORT_ID_UNKNOWN_03 = 0x03    # Device → Host: unknown
+REPORT_ID_UNKNOWN_04 = 0x04    # Device → Host: unknown
 
 # HID Report sizes (bytes, excluding report ID)
 REPORT_PAYLOAD_SIZE = 63  # 504 bits
