@@ -26,20 +26,73 @@ from dataclasses import dataclass, field
 from rokid_spatial.spatial import Quaternion, normalize_quaternion
 
 
+@dataclass
+class AxisConfig:
+    """Per-axis sign and scale configuration for IMU remapping.
+
+    Allows runtime tuning of each axis independently. Signs can be
+    toggled to fix inverted axes, scales adjust responsiveness.
+
+    Attributes:
+        gyro_signs: (sx, sy, sz) — multiply each gyro axis. +1 or -1.
+        accel_signs: (sx, sy, sz) — multiply each accel axis.
+        gyro_scale: Global gyro sensitivity multiplier.
+        accel_scale: Global accel sensitivity multiplier.
+    """
+
+    gyro_signs: tuple[float, float, float] = (-1.0, 1.0, -1.0)
+    accel_signs: tuple[float, float, float] = (-1.0, 1.0, -1.0)
+    gyro_scale: float = 1.0
+    accel_scale: float = 1.0
+
+    def remap(
+        self,
+        gx: float, gy: float, gz: float,
+        ax: float, ay: float, az: float,
+    ) -> tuple[float, float, float, float, float, float]:
+        """Apply axis remapping with current config."""
+        gs = self.gyro_signs
+        a_s = self.accel_signs
+        return (
+            gx * gs[0] * self.gyro_scale,
+            gy * gs[1] * self.gyro_scale,
+            gz * gs[2] * self.gyro_scale,
+            ax * a_s[0] * self.accel_scale,
+            ay * a_s[1] * self.accel_scale,
+            az * a_s[2] * self.accel_scale,
+        )
+
+    def flip_gyro(self, axis: int) -> None:
+        """Flip the sign of a gyro axis (0=X, 1=Y, 2=Z)."""
+        signs = list(self.gyro_signs)
+        signs[axis] *= -1
+        self.gyro_signs = tuple(signs)
+
+    def flip_accel(self, axis: int) -> None:
+        """Flip the sign of an accel axis (0=X, 1=Y, 2=Z)."""
+        signs = list(self.accel_signs)
+        signs[axis] *= -1
+        self.accel_signs = tuple(signs)
+
+
+# Default axis config for Rokid Max
+ROKID_DEFAULT_AXIS_CONFIG = AxisConfig(
+    gyro_signs=(-1.0, 1.0, -1.0),
+    accel_signs=(-1.0, 1.0, -1.0),
+)
+
+
 def remap_rokid_axes(
     gx: float, gy: float, gz: float,
     ax: float, ay: float, az: float,
 ) -> tuple[float, float, float, float, float, float]:
     """Remap Rokid Max sensor axes to Madgwick-expected NWU convention.
 
-    The Rokid's IMU axes are oriented differently from the NED/NWU frame
-    that Madgwick expects. This remapping was derived empirically:
-      - Negate gyro X and Z for correct pitch/yaw direction
-      - Negate accel X and Z for correct gravity alignment
+    Uses the default axis config. For runtime tuning, use AxisConfig.remap() directly.
 
     Returns: (gx, gy, gz, ax, ay, az) in Madgwick convention.
     """
-    return (-gx, gy, -gz, -ax, ay, -az)
+    return ROKID_DEFAULT_AXIS_CONFIG.remap(gx, gy, gz, ax, ay, az)
 
 
 @dataclass
@@ -60,6 +113,7 @@ class MadgwickFilter:
         default_factory=lambda: Quaternion(w=1.0, x=0.0, y=0.0, z=0.0)
     )
     remap_axes: bool = True  # Set False for pre-remapped or simulated data
+    axis_config: AxisConfig = field(default_factory=lambda: AxisConfig())
 
     def update_imu(
         self,
@@ -85,7 +139,7 @@ class MadgwickFilter:
             dt = self.sample_period
 
         if self.remap_axes:
-            gx, gy, gz, ax, ay, az = remap_rokid_axes(gx, gy, gz, ax, ay, az)
+            gx, gy, gz, ax, ay, az = self.axis_config.remap(gx, gy, gz, ax, ay, az)
 
         q = self.quaternion
         qw, qx, qy, qz = q.w, q.x, q.y, q.z

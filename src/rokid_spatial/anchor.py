@@ -29,8 +29,8 @@ class AnchoredPanel:
         panel_id: Unique identifier.
         yaw_deg: World-space yaw where the panel center lives.
         pitch_deg: World-space pitch where the panel center lives.
-        width: Panel width in virtual pixels.
-        height: Panel height in virtual pixels.
+        width: Panel width in virtual pixels (mutable for resize).
+        height: Panel height in virtual pixels (mutable for resize).
         color: RGB tuple for the panel background.
         title: Display label.
         created_at: Timestamp of creation.
